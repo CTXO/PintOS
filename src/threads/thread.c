@@ -492,8 +492,34 @@ next_thread_to_run (void)
 {
   if (list_empty (&ready_list))
     return idle_thread;
-  else
-    return list_entry (list_pop_front (&ready_list), struct thread, elem);
+  else{
+    // Traverses ready_list, stores the thread with the highest priority, removes it from the list and return it.
+    //
+    struct list_elem* start_iter = list_begin (&ready_list);
+
+    // Variable to store the list element of the thread with highest priority to remove it at the end of the function
+    struct list_elem* max_priority_iter = start_iter;
+
+    struct thread* max_priority_thread = list_entry (start_iter, struct thread, elem);
+    int max_priority = max_priority_thread->priority;
+
+    struct list_elem* second_iter = list_next(start_iter);
+
+    for(struct list_elem* iter = second_iter;
+    iter != list_end(&ready_list);
+    iter = list_next(iter))
+    {
+      struct thread* t = list_entry(iter, struct thread, elem);
+      if (t->priority > max_priority) {
+        max_priority_thread = t;
+        max_priority_iter = iter;
+        max_priority = t->priority;
+      }
+    }
+
+    list_remove(max_priority_iter);
+    return max_priority_thread;
+  }
 }
 
 /* Completes a thread switch by activating the new thread's page
