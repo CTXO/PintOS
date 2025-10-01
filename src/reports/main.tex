@@ -198,19 +198,40 @@ void thread_unblock (struct thread *t) {
 
 \hfill \break
 
-Doação de prioridade (threads/thread.c) -> a thread que está segurando o lock recebe prioridade de quem está esperando.
+Doação de prioridade (threads/thread.c) -> Para implementar a doação de prioridade com suporte a cadeias de doação, separamos a lógica em duas funções. A função \texttt{thread\_donate\_priority\_rec} é a função recursiva que realiza a doação, enquanto \texttt{thread\_donate\_priority} é a função wrapper que inicia o processo.
+
+A função recursiva recebe um contador \texttt{rec\_count} que limita a profundidade da cadeia de doação a no máximo 8 níveis (definido pela constante \texttt{MAX\_DONATE\_CHAIN}). Isso previne loops infinitos e garante que o processo de doação termine em tempo razoável.
 
 
 \begin{lstlisting}[language=C]
-void thread_donate_priority (struct thread *t) {
+void thread_donate_priority_rec (struct thread *t, int rec_count) {
+  if (rec_count >= MAX_DONATE_CHAIN) {
+    return;
+  }
+  
   struct lock *lock = t->waiting_lock;
-  struct thread *holder = lock->holder;
+  struct thread *holder;
 
+  if (lock == NULL)
+    return;
+
+  holder = lock->holder;
+  if (holder == NULL)
+    return;
+
+  /* Update lock's max priority if current thread has higher priority. */
   if (t->priority > lock->max_priority)
     lock->max_priority = t->priority;
 
-  if (t->priority > holder->priority)
-    holder->priority = t->priority;  //doar prioridade
+  /* Update holder's priority and propagate donation through the chain. */
+  if (t->priority > holder->priority) { 
+    holder->priority = t->priority;
+    thread_donate_priority_rec(holder, rec_count+1);
+  }
+}
+
+void thread_donate_priority(struct thread *t) {
+  thread_donate_priority_rec(t, 0);
 }
 \end{lstlisting}
 

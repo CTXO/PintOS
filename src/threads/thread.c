@@ -371,8 +371,7 @@ thread_update_priority (struct thread *t)
   t->priority = max_donated;
 }
 
-/* Donate priority to lock holder (NO CHAIN - simplified version).
-   Called when current thread is about to wait on a lock. */
+/* Donate Priority recursively */
 void
 thread_donate_priority_rec (struct thread *t, int rec_count)
 {
@@ -394,14 +393,12 @@ thread_donate_priority_rec (struct thread *t, int rec_count)
   if (t->priority > lock->max_priority)
     lock->max_priority = t->priority;
 
-  /* Update holder's priority if necessary (ONLY ONE LEVEL - no chain). */
+  /* Update holder's priority if necessary. */
   if (t->priority > holder->priority) { 
     holder->priority = t->priority;
     thread_donate_priority_rec(holder, rec_count+1);
   }
 
-  /* NOTE: We do NOT follow the chain through holder->waiting_lock.
-     This means nested donations will NOT work! */
 }
 
 void thread_donate_priority(struct thread*t) {
