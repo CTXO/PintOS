@@ -1,0 +1,267 @@
+\documentclass{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+ \geometry{
+ a4paper,
+ total={170mm,257mm},
+ left=20mm,
+ top=20mm,
+ }
+ \usepackage{graphicx}
+ \usepackage{titling}
+
+ \title{Relatório PintOS \\ Projeto 1: Threads}
+\author{Romero Cartaxo e Severino Murilo da Silva}
+\date{Outubro 2025}
+ 
+ \usepackage{fancyhdr}
+\fancypagestyle{plain}{%  the preset of fancyhdr 
+    \fancyhf{} % clear all header and footer fields
+    \fancyfoot[R]{\includegraphics[width=2cm]{cin_logo.png}}
+    \fancyfoot[L]{\thedate}
+    \fancyhead[L]{Relatório}
+    \fancyhead[R]{\theauthor}
+}
+\makeatletter
+\def\@maketitle{%
+  \newpage
+  \null
+  \vskip 1em%
+  \begin{center}%
+  \let \footnote \thanks
+    {\LARGE \@title \par}%
+    \vskip 1em%
+    %{\large \@date}%
+  \end{center}%
+  \par
+  \vskip 1em}
+\makeatother
+
+\usepackage{lipsum}  
+\usepackage{cmbright}
+
+\usepackage{listings}
+
+\usepackage{xcolor}
+\lstset{
+    basicstyle=\ttfamily\footnotesize,
+    keywordstyle=\color{blue}\bfseries,
+    stringstyle=\color{red},
+    commentstyle=\color{gray}\itshape,
+    numbers=left,
+    numberstyle=\tiny\color{gray},
+    stepnumber=1,
+    numbersep=5pt,
+    backgroundcolor=\color[gray]{0.95},
+    frame=single,
+    rulecolor=\color{gray},
+    captionpos=b,
+    breaklines=true,
+    breakatwhitespace=true,
+    tabsize=2
+}
+
+\begin{document}
+
+\maketitle
+
+\noindent\begin{tabular}{@{}ll}
+    Alunos & \theauthor\\
+ Professor & Eduardo Antonio Guimaraes Tavares \\
+\end{tabular}
+
+\section*{Alarm Clock}
+Para implementar o Alarm Clock sem a necessidade de escalonar a thread múltiplas vezes para checar se ela ainda está dormindo, decidimos registrar o tempo em que a thread deve acordar na struct da thread:
+
+\begin{lstlisting}[language=C]
+struct thread
+  {
+    /* Owned by thread.c. */
+    tid_t tid;                          /* Thread identifier. */
+    enum thread_status status;          /* Thread state. */
+    char name[16];                      /* Name (for debugging purposes). */
+    uint8_t *stack;                     /* Saved stack pointer. */
+    int priority;                       /* Priority. */
+    int64_t wake_tick;  /* Amount of system ticks for when the thread should wake up */
+    struct list_elem allelem;           /* List element for all threads list. */
+    ...
+
+  };
+\end{lstlisting}
+
+\hfill \break
+
+Com isso, ao chamarmos \texttt{timer\_sleep}, devemos somar o valor de ticks já passados com o valor de ticks que a thread deverá dormir e atribuir esse valor ao atributo \texttt{wake\_tick} da thread atual.
+Em seguida, desabilitamos a interrupção, guardamos o valor atual da interrupção em uma variável, bloqueamos a thread chamando a função \texttt(thread\_block) e logo após, restauramos o antigo valor da interrupção.
+É necessário desabilitar a interrupção pois não queremos que a thread seja interrompida enquanto ela está no processo de ser bloqueada pois isso pode causar comportamentos inesperados.
+Quando restauramos o valor da interrupção após ela ser bloqueada, isso só irá acontecer quando a thread acordar novamente e retornar a execução. Porém, quando a próxima thread for escalonada, a interrupção será habilitada novamente, o que vai de acordo com o comportamento esperado.
+
+\begin{lstlisting}[language=C]
+timer_sleep (int64_t ticks) 
+{
+  int64_t start = timer_ticks ();
+
+  ASSERT (intr_get_level () == INTR_ON);
+
+  struct thread *t = thread_current();
+  t->wake_tick = ticks + start;
+
+  enum intr_level old_level = intr_disable();
+  thread_block();
+  intr_set_level(old_level);
+}
+\end{lstlisting}
+
+
+\hfill \break
+
+Para acordamos a thread, precisamos modificar a função responsável por lidar com as interrupções do timer.
+Para auxiliar esta tarefa, criamos uma função \texttt{check\_sleeping\_thread} que, com o auxílio da função \texttt{thread\_foreach}, irá verificar em cada thread, se a thread está bloqueada e se já está no momento de ela ser acordada. Caso sim, ela é colocada na lista de threads prontas para execução.
+
+
+\begin{lstlisting}[language=C]
+// Used by thread_foreach to wake sleeping threads on the right time
+void check_sleeping_thread(struct thread *t, void *aux) {
+  int64_t start = ticks;
+  if (t->wake_tick && start > t->wake_tick && t->status == THREAD_BLOCKED) {
+    t->wake_tick = 0;
+    thread_unblock(t);
+  }
+}
+
+/* Timer interrupt handler. */
+static void
+timer_interrupt (struct intr_frame *args UNUSED)
+{
+  ticks++;
+  thread_tick ();
+  thread_foreach(check_sleeping_thread, NULL);
+}
+\end{lstlisting}
+
+\section*{Priority Scheduler}
+Para implementarmos escalonamento por prioridade nesse projeto, precisamos modificar a função \texttt{next\_thread\_to\_run} que é chamada toda vez que o escalonador é invocado. Como o nome da função indica, o seu objetivo é retornar a próxima thread que deve ser executada. 
+Nela, nós iteramos sobre a lista de threads prontas para execução, guardamos a thread que possui o valor de prioridade mais alto, removemos ela da lista de threads prontas para execução e retornamos ela:
+
+\begin{lstlisting}[language=C]
+static struct thread *
+next_thread_to_run (void) 
+{
+  if (list_empty (&ready_list))
+    return idle_thread;
+  else{
+    // Traverses ready_list, stores the thread with the highest priority, removes it from the list and return it.
+    
+    struct list_elem* start_iter = list_begin (&ready_list);
+
+    // Variable to store the list element of the thread with highest priority to remove it at the end of the function
+    struct list_elem* max_priority_iter = start_iter;
+
+    struct thread* max_priority_thread = list_entry (start_iter, struct thread, elem);
+    int max_priority = max_priority_thread->priority;
+
+    struct list_elem* second_iter = list_next(start_iter);
+
+    for(struct list_elem* iter = second_iter;
+    iter != list_end(&ready_list);
+    iter = list_next(iter))
+    {
+      struct thread* t = list_entry(iter, struct thread, elem);
+      if (t->priority > max_priority) {
+        max_priority_thread = t;
+        max_priority_iter = iter;
+        max_priority = t->priority;
+      }
+    }
+
+    list_remove(max_priority_iter);
+    return max_priority_thread;
+  }
+}
+\end{lstlisting}
+
+\section*{Priority Donation}
+Para implementar a doação de prioridade foi necessário adaptarmos os seguintes arquivos:
+
+
+Ordenação da ready List (threads/thread.c) -> pensei em algo como insertion sort pra inserir as threads já ordenadas por prioridade: 
+\newpage
+
+
+\begin{lstlisting}[language=C]
+void thread_unblock (struct thread *t) {
+  list_insert_ordered (&ready_list, &t->elem, thread_priority_less, NULL);
+  t->status = THREAD_READY;
+}
+\end{lstlisting}
+
+\hfill \break
+
+Doação de prioridade (threads/thread.c) -> a thread que está segurando o lock recebe prioridade de quem está esperando.
+
+
+\begin{lstlisting}[language=C]
+void thread_donate_priority (struct thread *t) {
+  struct lock *lock = t->waiting_lock;
+  struct thread *holder = lock->holder;
+
+  if (t->priority > lock->max_priority)
+    lock->max_priority = t->priority;
+
+  if (t->priority > holder->priority)
+    holder->priority = t->priority;  //doar prioridade
+}
+\end{lstlisting}
+
+\hfill \break
+
+Aquisição de Lock (threads/synch.c)
+
+
+\begin{lstlisting}[language=C]
+void lock_acquire (struct lock *lock) {
+  if (lock->holder != NULL) {
+    cur->waiting_lock = lock;
+    thread_donate_priority (cur);  //doar antes de bloquear
+  }
+  sema_down (&lock->semaphore);
+  lock->holder = cur;
+  list_push_back (&cur->locks_held, &lock->elem);
+}
+\end{lstlisting}
+
+\hfill \break
+
+Liberação de lock (threads/synch.c)
+
+\begin{lstlisting}[language=C]
+void lock_release (struct lock *lock) {
+  list_remove (&lock->elem);
+  thread_update_priority (cur);  //restaurar prioridade
+  lock->max_priority = PRI_MIN;
+  sema_up (&lock->semaphore);
+  thread_yield();
+}
+\end{lstlisting}
+
+\hfill \break
+
+Atualização de prioridade (threads/thread.c)
+\begin{lstlisting}[language=C]
+void thread_update_priority (struct thread *t) {
+  int max = t->base_priority;
+
+  // Percorre todos os locks que possui
+  for (e = list_begin (&t->locks_held); ...) {
+    struct lock *lock = list_entry (e, struct lock, elem);
+    if (lock->max_priority > max)
+      max = lock->max_priority;
+  }
+
+  t->priority = max;  //usar a maior prioridade
+}
+\end{lstlisting}
+
+
+\end{document}
