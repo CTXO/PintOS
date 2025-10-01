@@ -106,16 +106,20 @@ sema_try_down (struct semaphore *sema)
 
    This function may be called from an interrupt handler. */
 void
-sema_up (struct semaphore *sema) 
+sema_up (struct semaphore *sema)
 {
   enum intr_level old_level;
 
   ASSERT (sema != NULL);
 
   old_level = intr_disable ();
-  if (!list_empty (&sema->waiters)) 
-    thread_unblock (list_entry (list_pop_front (&sema->waiters),
-                                struct thread, elem));
+  if (!list_empty (&sema->waiters))
+    {
+      /* Sort waiters by priority and wake the highest priority thread. */
+      list_sort (&sema->waiters, thread_priority_less, NULL);
+      thread_unblock (list_entry (list_pop_front (&sema->waiters),
+                                  struct thread, elem));
+    }
   sema->value++;
   intr_set_level (old_level);
 }
@@ -178,6 +182,7 @@ lock_init (struct lock *lock)
   ASSERT (lock != NULL);
 
   lock->holder = NULL;
+  lock->max_priority = PRI_MIN;
   sema_init (&lock->semaphore, 1);
 }
 
@@ -192,12 +197,27 @@ lock_init (struct lock *lock)
 void
 lock_acquire (struct lock *lock)
 {
+  struct thread *cur = thread_current ();
+
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
+  /* If lock is held, set up priority donation. */
+  if (lock->holder != NULL)
+    {
+      cur->waiting_lock = lock;
+      thread_donate_priority (cur);
+    }
+
   sema_down (&lock->semaphore);
-  lock->holder = thread_current ();
+
+  /* Now we have the lock. */
+  enum intr_level old_level = intr_disable ();
+  cur->waiting_lock = NULL;
+  lock->holder = cur;
+  list_push_back (&cur->locks_held, &lock->elem);
+  intr_set_level (old_level);
 }
 
 /* Tries to acquires LOCK and returns true if successful or false
@@ -226,13 +246,31 @@ lock_try_acquire (struct lock *lock)
    make sense to try to release a lock within an interrupt
    handler. */
 void
-lock_release (struct lock *lock) 
+lock_release (struct lock *lock)
 {
+  struct thread *cur = thread_current ();
+
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
 
+  enum intr_level old_level = intr_disable ();
+
+  /* Remove lock from thread's list of held locks. */
+  list_remove (&lock->elem);
+
+  /* Recalculate thread's priority based on remaining donations. */
+  thread_update_priority (cur);
+
+  /* Reset lock's max priority. */
+  lock->max_priority = PRI_MIN;
   lock->holder = NULL;
+
+  intr_set_level (old_level);
+
   sema_up (&lock->semaphore);
+
+  /* Yield if we are no longer the highest priority thread. */
+  thread_yield ();
 }
 
 /* Returns true if the current thread holds LOCK, false

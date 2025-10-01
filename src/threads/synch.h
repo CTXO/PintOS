@@ -18,10 +18,12 @@ void sema_up (struct semaphore *);
 void sema_self_test (void);
 
 /* Lock. */
-struct lock 
+struct lock
   {
     struct thread *holder;      /* Thread holding lock (for debugging). */
     struct semaphore semaphore; /* Binary semaphore controlling access. */
+    struct list_elem elem;      /* List element for thread's locks_held list. */
+    int max_priority;           /* Maximum priority of waiting threads. */
   };
 
 void lock_init (struct lock *);
