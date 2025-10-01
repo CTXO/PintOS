@@ -19,6 +19,7 @@
    Used to detect stack overflow.  See the big comment at the top
    of thread.h for details. */
 #define THREAD_MAGIC 0xcd6abf4b
+#define MAX_DONATE_CHAIN 8
 
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
@@ -373,8 +374,12 @@ thread_update_priority (struct thread *t)
 /* Donate priority to lock holder (NO CHAIN - simplified version).
    Called when current thread is about to wait on a lock. */
 void
-thread_donate_priority (struct thread *t)
+thread_donate_priority_rec (struct thread *t, int rec_count)
 {
+
+  if (rec_count >= MAX_DONATE_CHAIN) {
+      return;
+  }
   struct lock *lock = t->waiting_lock;
   struct thread *holder;
 
@@ -390,11 +395,17 @@ thread_donate_priority (struct thread *t)
     lock->max_priority = t->priority;
 
   /* Update holder's priority if necessary (ONLY ONE LEVEL - no chain). */
-  if (t->priority > holder->priority)
+  if (t->priority > holder->priority) { 
     holder->priority = t->priority;
+    thread_donate_priority_rec(holder, rec_count+1);
+  }
 
   /* NOTE: We do NOT follow the chain through holder->waiting_lock.
      This means nested donations will NOT work! */
+}
+
+void thread_donate_priority(struct thread*t) {
+    thread_donate_priority_rec(t, 0);
 }
 
 /* Sets the current thread's priority to NEW_PRIORITY. */
