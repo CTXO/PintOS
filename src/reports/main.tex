@@ -185,7 +185,7 @@ next_thread_to_run (void)
 Para implementar a doação de prioridade foi necessário adaptarmos os seguintes arquivos:
 
 
-Ordenação da ready List (threads/thread.c) -> pensei em algo como insertion sort pra inserir as threads já ordenadas por prioridade: 
+Ordenação da ready List (threads/thread.c): pensei em algo como insertion sort pra inserir as threads já ordenadas por prioridade: 
 \newpage
 
 
@@ -198,7 +198,7 @@ void thread_unblock (struct thread *t) {
 
 \hfill \break
 
-Doação de prioridade (threads/thread.c) -> Para implementar a doação de prioridade com suporte a cadeias de doação, separamos a lógica em duas funções. A função \texttt{thread\_donate\_priority\_rec} é a função recursiva que realiza a doação, enquanto \texttt{thread\_donate\_priority} é a função wrapper que inicia o processo.
+Doação de prioridade (threads/thread.c): Para implementar a doação de prioridade com suporte a cadeias de doação, separamos a lógica em duas funções. A função \texttt{thread\_donate\_priority\_rec} é a função recursiva que realiza a doação, enquanto \texttt{thread\_donate\_priority} é a função wrapper que inicia o processo.
 
 A função recursiva recebe um contador \texttt{rec\_count} que limita a profundidade da cadeia de doação a no máximo 8 níveis (definido pela constante \texttt{MAX\_DONATE\_CHAIN}). Isso previne loops infinitos e garante que o processo de doação termine em tempo razoável.
 

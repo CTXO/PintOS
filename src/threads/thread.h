@@ -146,6 +146,7 @@ int thread_get_load_avg (void);
 
 /* Priority donation functions. */
 void thread_update_priority (struct thread *);
+void thread_donate_priority_rec (struct thread *, int rec_count);
 void thread_donate_priority (struct thread *);
 bool thread_priority_less (const struct list_elem *, const struct list_elem *, void *);
 
